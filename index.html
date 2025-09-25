@@ -74,168 +74,173 @@
   <ul id="taskList"></ul>
   <div id="progressCircle" class="progress-circle">0%</div>
 
-  <script>
-    let tasks = [];
+ <script>
+  // Load tasks from localStorage or start fresh
+  let tasks = JSON.parse(localStorage.getItem("tasks")) || [];
 
-    function nextOccurrence(timeStr, base = new Date()) {
-      // Returns a Date at the next occurrence of HH:MM (today if in future, otherwise tomorrow)
-      const [h, m] = timeStr.split(":").map(Number);
-      const dt = new Date(base);
-      dt.setHours(h ?? 0, m ?? 0, 0, 0);
-      if (dt <= base) dt.setDate(dt.getDate() + 1);
-      return dt;
+  function nextOccurrence(timeStr, base = new Date()) {
+    const [h, m] = timeStr.split(":").map(Number);
+    const dt = new Date(base);
+    dt.setHours(h ?? 0, m ?? 0, 0, 0);
+    if (dt <= base) dt.setDate(dt.getDate() + 1);
+    return dt;
+  }
+
+  function saveTasks() {
+    localStorage.setItem("tasks", JSON.stringify(tasks));
+  }
+
+  function addTask() {
+    const name = document.getElementById("taskInput").value.trim();
+    const startStr = document.getElementById("startTime").value;
+    const endStr = document.getElementById("endTime").value;
+
+    if (!name || !startStr || !endStr) {
+      alert("Please enter task, start time, and end time.");
+      return;
     }
 
-    function addTask() {
-      const name = document.getElementById("taskInput").value.trim();
-      const startStr = document.getElementById("startTime").value;
-      const endStr = document.getElementById("endTime").value;
+    let startDT = nextOccurrence(startStr);
+    let endDT = nextOccurrence(endStr);
+    while (endDT <= startDT) endDT.setDate(endDT.getDate() + 1);
 
-      if (!name || !startStr || !endStr) {
-        alert("Please enter task, start time, and end time.");
-        return;
+    const durationMs = endDT - startDT;
+    const durationText = fmtDuration(durationMs);
+
+    tasks.push({
+      id: crypto.randomUUID(),
+      text: name,
+      completed: false,
+      startISO: startDT.toISOString(),
+      endISO: endDT.toISOString(),
+      durationText
+    });
+
+    saveTasks(); // 🔒 persist to localStorage
+
+    document.getElementById("taskInput").value = "";
+    document.getElementById("startTime").value = "";
+    document.getElementById("endTime").value = "";
+
+    renderTasks();
+    updateProgress();
+    updateTimers();
+  }
+
+  function fmtTime(dt) {
+    return dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  function fmtDate(dt) {
+    return dt.toLocaleDateString([], { month: "short", day: "2-digit" });
+  }
+  function fmtDuration(ms) {
+    const totalSec = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    return `${h}h ${m}m`;
+  }
+
+  function toggleTask(id) {
+    const t = tasks.find(x => x.id === id);
+    if (!t) return;
+    t.completed = !t.completed;
+    saveTasks(); // 🔒 persist change
+    renderTasks();
+    updateProgress();
+    updateTimers();
+  }
+
+  function deleteTask(id) {
+    tasks = tasks.filter(t => t.id !== id);
+    saveTasks(); // 🔒 persist change
+    renderTasks();
+    updateProgress();
+    updateTimers();
+  }
+
+  function renderTasks() {
+    const list = document.getElementById("taskList");
+    list.innerHTML = "";
+    const now = new Date();
+
+    tasks.forEach((task) => {
+      const startDT = new Date(task.startISO);
+      const endDT = new Date(task.endISO);
+
+      const li = document.createElement("li");
+      if (task.completed) li.classList.add("completed");
+
+      li.innerHTML = `
+        <div class="task-main">
+          <span class="task-title">${escapeHtml(task.text)}</span>
+          <div class="task-actions">
+            <input type="checkbox" ${task.completed ? "checked" : ""} aria-label="Complete task">
+            <button class="delete-btn" aria-label="Delete task">✖</button>
+          </div>
+        </div>
+        <div class="time-info">
+          Start: ${fmtTime(startDT)} (${fmtDate(startDT)}) |
+          End: ${fmtTime(endDT)} (${fmtDate(endDT)}) |
+          Duration: ${task.durationText}
+          <div id="timer-${task.id}" class="timer"></div>
+        </div>
+      `;
+
+      li.querySelector('input[type="checkbox"]').addEventListener('change', () => toggleTask(task.id));
+      li.querySelector('.delete-btn').addEventListener('click', () => deleteTask(task.id));
+      list.appendChild(li);
+    });
+  }
+
+  function updateTimers() {
+    const now = new Date();
+    tasks.forEach(task => {
+      const el = document.getElementById(`timer-${task.id}`);
+      if (!el) return;
+
+      const start = new Date(task.startISO);
+      const end = new Date(task.endISO);
+
+      if (now < start) {
+        const sec = Math.floor((start - now) / 1000);
+        el.textContent = `Starts in: ${countdown(sec)}`;
+        el.className = "timer starting";
+      } else if (now >= start && now < end) {
+        const sec = Math.floor((end - now) / 1000);
+        el.textContent = `Time left: ${countdown(sec)}`;
+        el.className = "timer running";
+      } else {
+        el.textContent = "Expired";
+        el.className = "timer expired";
       }
+    });
+  }
 
-      // Anchor to next occurrence for both times (so adding at 23:45 for 00:49 means tomorrow)
-      let startDT = nextOccurrence(startStr);
-      let endDT   = nextOccurrence(endStr);
+  function countdown(totalSec) {
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    return `${h}h ${m}m ${s}s`;
+  }
 
-      // Ensure end is after start; if not, roll end forward until it is
-      while (endDT <= startDT) endDT.setDate(endDT.getDate() + 1);
+  function updateProgress() {
+    const total = tasks.length || 0;
+    const completed = tasks.filter(t => t.completed).length;
+    const percent = total ? Math.round((completed / total) * 100) : 0;
+    const circle = document.getElementById("progressCircle");
+    circle.textContent = percent + "%";
+    circle.style.background = `conic-gradient(var(--ok) ${percent * 3.6}deg, #ddd ${percent * 3.6}deg)`;
+  }
 
-      const durationMs = endDT - startDT;
-      const durationText = fmtDuration(durationMs);
+  function escapeHtml(s) {
+    return s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  }
 
-      tasks.push({
-        id: crypto.randomUUID(),
-        text: name,
-        completed: false,
-        startISO: startDT.toISOString(),
-        endISO: endDT.toISOString(),
-        durationText
-      });
+  // Initial render on page load
+  renderTasks();
+  updateProgress();
+  updateTimers();
 
-      // clear inputs
-      document.getElementById("taskInput").value = "";
-      document.getElementById("startTime").value = "";
-      document.getElementById("endTime").value = "";
-
-      renderTasks();
-      updateProgress();
-      updateTimers(); // immediate first paint
-    }
-
-    function fmtTime(dt){
-      return dt.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
-    }
-    function fmtDate(dt){
-      return dt.toLocaleDateString([], {month:"short", day:"2-digit"});
-    }
-    function fmtDuration(ms){
-      const totalSec = Math.max(0, Math.floor(ms / 1000));
-      const h = Math.floor(totalSec / 3600);
-      const m = Math.floor((totalSec % 3600) / 60);
-      return `${h}h ${m}m`;
-    }
-
-    function toggleTask(id){
-      const t = tasks.find(x => x.id === id);
-      if (!t) return;
-      t.completed = !t.completed;
-      renderTasks();
-      updateProgress();
-      updateTimers();
-    }
-
-    function deleteTask(id){
-      tasks = tasks.filter(t => t.id !== id);
-      renderTasks();
-      updateProgress();
-      updateTimers();
-    }
-
-    function renderTasks(){
-      const list = document.getElementById("taskList");
-      list.innerHTML = "";
-      const now = new Date();
-
-      tasks.forEach((task) => {
-        const startDT = new Date(task.startISO);
-        const endDT = new Date(task.endISO);
-
-        const li = document.createElement("li");
-        if (task.completed) li.classList.add("completed");
-
-        li.innerHTML = `
-          <div class="task-main">
-            <span class="task-title">${escapeHtml(task.text)}</span>
-            <div class="task-actions">
-              <input type="checkbox" ${task.completed ? "checked" : ""} aria-label="Complete task">
-              <button class="delete-btn" aria-label="Delete task">✖</button>
-            </div>
-          </div>
-          <div class="time-info">
-            Start: ${fmtTime(startDT)} (${fmtDate(startDT)}) |
-            End: ${fmtTime(endDT)} (${fmtDate(endDT)}) |
-            Duration: ${task.durationText}
-            <div id="timer-${task.id}" class="timer"></div>
-          </div>
-        `;
-
-        // wire actions
-        li.querySelector('input[type="checkbox"]').addEventListener('change', () => toggleTask(task.id));
-        li.querySelector('.delete-btn').addEventListener('click', () => deleteTask(task.id));
-        list.appendChild(li);
-      });
-    }
-
-    function updateTimers(){
-      const now = new Date();
-      tasks.forEach(task => {
-        const el = document.getElementById(`timer-${task.id}`);
-        if (!el) return;
-
-        const start = new Date(task.startISO);
-        const end = new Date(task.endISO);
-
-        if (now < start){
-          // show countdown to start
-          const sec = Math.floor((start - now)/1000);
-          el.textContent = `Starts in: ${countdown(sec)}`;
-          el.className = "timer starting";
-        } else if (now >= start && now < end){
-          const sec = Math.floor((end - now)/1000);
-          el.textContent = `Time left: ${countdown(sec)}`;
-          el.className = "timer running";
-        } else {
-          el.textContent = "Expired";
-          el.className = "timer expired";
-        }
-      });
-    }
-
-    function countdown(totalSec){
-      const h = Math.floor(totalSec / 3600);
-      const m = Math.floor((totalSec % 3600) / 60);
-      const s = totalSec % 60;
-      return `${h}h ${m}m ${s}s`;
-    }
-
-    function updateProgress(){
-      const total = tasks.length || 0;
-      const completed = tasks.filter(t => t.completed).length;
-      const percent = total ? Math.round((completed/total)*100) : 0;
-      const circle = document.getElementById("progressCircle");
-      circle.textContent = percent + "%";
-      circle.style.background = `conic-gradient(var(--ok) ${percent*3.6}deg, #ddd ${percent*3.6}deg)`;
-    }
-
-    function escapeHtml(s){
-      return s.replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
-    }
-
-    // tick timers every second
-    setInterval(updateTimers, 1000);
-  </script>
-</body>
-</html>
+  // Tick timers every second
+  setInterval(updateTimers, 1000);
+</script>
